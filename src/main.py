@@ -1,3 +1,5 @@
+from camera import Camera
+
 def main():
     print("ok")
 
