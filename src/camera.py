@@ -1,8 +1,13 @@
+import os
+os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 
 class Camera:
     def __init__(self):
-        self.vid = cv2.VideoCapture(0)
+        self.vid = cv2.VideoCapture(0, cv2.CAP_MSMF)
+        # TODO: modify for different resolutions
+        self.vid.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        self.vid.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
         
     def get_frame(self):
         ret, frame = self.vid.read()
