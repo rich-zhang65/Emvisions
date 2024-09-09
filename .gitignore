@@ -170,7 +170,7 @@ poetry.toml
 # LSP config files
 pyrightconfig.json
 
-src/res/dataset_images
+src/res/data
 .jpg
 .jpeg
 .png
