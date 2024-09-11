@@ -1,3 +1,4 @@
+import cv2
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,8 +13,11 @@ import csv
 import os
 import argparse
 
+from utils import get_circle_dim
+
 class Config:
     model_path = "res/models/model.pth"
+    emoji_folder = "res/emojis/ios/"
     batch_size = 20
     num_epochs = 20
     learning_rate = 1e-3
@@ -42,8 +46,10 @@ class EmoDataset(Dataset):
         return image, self.labels[idx]
 
 class EmoClassifier(nn.Module):
-    def __init__(self, classes=7):
+    def __init__(self, emotions):
         super(EmoClassifier, self).__init__()
+
+        self.emotions = emotions
 
         self.conv1 = nn.Conv2d(1, 16, kernel_size=3, padding=1)
         self.pool1 = nn.MaxPool2d(kernel_size=4, stride=4)
@@ -54,7 +60,7 @@ class EmoClassifier(nn.Module):
         self.flattened_size = 32 * 6 * 6
 
         self.fc1 = nn.Linear(self.flattened_size, 128)
-        self.fc2 = nn.Linear(128, classes)
+        self.fc2 = nn.Linear(128, len(self.emotions))
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
@@ -68,24 +74,85 @@ class EmoClassifier(nn.Module):
         x = self.fc2(x)
         return x
     
+    def _classify(self, face, device):
+        face = cv2.resize(face, (48, 48))
+        face = face / 255
+        face = np.reshape(face, (1, 1, 48, 48))
+
+        face_tensor = torch.tensor(face, dtype=torch.float32).to(device)
+
+        with torch.no_grad():
+            output = self.forward(face_tensor)
+            prediction = torch.argmax(output, dim=1).item()
+
+        return prediction
+    
+    def show_emotion_text(self, frame, faces, device):
+        grayed = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        for (x, y, w, h) in faces:
+            center, _ = get_circle_dim(x, y, w, h)
+
+            face = grayed[y:y+h, x:x+w]
+            label = self._classify(face, device)
+            text = self.emotions[label]
+
+            # Debug
+            # cv2.imshow('Detected Face', face)
+
+            (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
+
+            cv2.putText(frame, text, (center[0] - text_width // 2, y - text_height // 2), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 1)
+
+    def get_filtered_frame(self, frame, faces, device):
+        grayed = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        for (x, y, w, h) in faces:
+            center, radius = get_circle_dim(x, y, w, h)
+
+            face = grayed[y:y+h, x:x+w]
+            label = self._classify(face, device)
+            text = self.emotions[label]
+            image_path = os.path.join(Config.emoji_folder, text + '.png')
+
+            filter = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+            filter = cv2.resize(filter, (2*radius, 2*radius))
+
+            overlay_rgb = filter[:, :, :3]
+            mask = filter[:, :, 3] / 255
+            
+            min_x = center[0] - radius
+            min_y = center[1] - radius
+            max_x = min_x + 2 * radius
+            max_y = min_y + 2 * radius
+
+            roi = frame[min_y:max_y, min_x:max_x]
+            mask = mask[:, :, np.newaxis]
+            blended = (roi * (1 - mask) + overlay_rgb * mask)
+
+            # Place the blended result back into the frame
+            frame[min_y:max_y, min_x:max_x] = blended
+
+        return frame
+    
 # Helper functions for training
 
 def generate_dataset(images, output_csv):
     emotions = {
-        'angry': 0,
-        'disgust': 1,
-        'fear': 2,
-        'happy': 3,
-        'sad': 4,
-        'surprise': 5,
-        'neutral': 6
+        0: 'angry',
+        1: 'disgust',
+        2: 'fear',
+        3: 'happy',
+        4: 'sad',
+        5: 'surprise',
+        6: 'neutral'
     }
 
     with open(output_csv, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['file_path', 'emotion'])
 
-        for emo, label in emotions.items():
+        for label, emo in emotions.items():
             folder = os.path.join(images, emo)
 
             if os.path.isdir(folder):
@@ -174,7 +241,6 @@ def evaluate_model(model, test_dataloader):
     print(f"Testing Evaluation - Accuracy: {accuracy:0.4f}%")
 
 if __name__ == '__main__':
-    torch.manual_seed(1)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     parser = argparse.ArgumentParser()
